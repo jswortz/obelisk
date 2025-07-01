@@ -10,6 +10,7 @@ from google.cloud import storage
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest
 import logging
+import base64
 
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-obelisk-dev")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -26,14 +27,25 @@ class ImageGeneratorTool:
         credentials.refresh(Request())
         return credentials.token
 
-    def call_gcs_location(
+    def call_artifacts(
         self,
         prompt: str,
-        product_image_gcs_uri: str,
+        product_bytes: bytes,
         product_description: str,
         sample_count: int = 1,
-        person_image_gcs_uri: str = None,
+        mime_type_product_image: str = "image/png",
+        mime_type_person_image: str = "image/png",
+        person_bytes: bytes = b"",
     ):
+
+        # Base64 encode the video data
+        encoded_product_image = base64.b64encode(product_bytes)
+        encoded_person_image = base64.b64encode(person_bytes)
+
+        # Convert the encoded bytes to a string
+        encoded_product_image_b64 = encoded_product_image.decode("utf-8")
+        encoded_person_image_b64 = encoded_person_image.decode("utf-8")
+
         access_token = self.get_access_token()
 
         headers = {
@@ -47,7 +59,10 @@ class ImageGeneratorTool:
                     "prompt": prompt,
                     "productImages": [
                         {
-                            "image": {"gcsUri": product_image_gcs_uri},
+                            "image": {
+                                "bytesBase64Encoded": encoded_product_image_b64,
+                                "mimeType": mime_type_product_image,
+                            },
                             "productConfig": {
                                 "productDescription": product_description,
                             },
@@ -57,9 +72,16 @@ class ImageGeneratorTool:
             ],
             "parameters": {"sampleCount": sample_count},
         }
-        if person_image_gcs_uri is not "":
+        if person_bytes != b"":
             data["instances"][0].update(
-                {"personImage": {"image": {"gcsUri": person_image_gcs_uri}}}
+                {
+                    "personImage": {
+                        "image": {
+                            "bytesBase64Encoded": encoded_person_image_b64,
+                            "mimeType": mime_type_person_image,
+                        }
+                    }
+                }
             )
 
         response = requests.post(self.api_endpoint, headers=headers, json=data)
@@ -67,12 +89,15 @@ class ImageGeneratorTool:
 
         return response.json()
 
-    def return_local_image_from_artifact(
+    def call_gcs_location(
         self,
         prompt: str,
-        image_bytes: bytes,
+        product_image_gcs_uri: str,
         product_description: str,
         sample_count: int = 1,
+        mime_type_product_image: str = "image/png",
+        mime_type_person_image: str = "image/png",
+        person_image_gcs_uri: str = "",
     ):
         access_token = self.get_access_token()
 
@@ -87,7 +112,10 @@ class ImageGeneratorTool:
                     "prompt": prompt,
                     "productImages": [
                         {
-                            "image": {"bytesBase64Encoded": image_bytes},
+                            "image": {
+                                "gcsUri": product_image_gcs_uri,
+                                "mime_type": mime_type_product_image,
+                            },
                             "productConfig": {
                                 "productDescription": product_description,
                             },
@@ -97,6 +125,17 @@ class ImageGeneratorTool:
             ],
             "parameters": {"sampleCount": sample_count},
         }
+        if person_image_gcs_uri != "":
+            data["instances"][0].update(
+                {
+                    "personImage": {
+                        "image": {
+                            "gcsUri": person_image_gcs_uri,
+                            "mimeType": mime_type_person_image,
+                        }
+                    }
+                }
+            )
 
         response = requests.post(self.api_endpoint, headers=headers, json=data)
         response.raise_for_status()
@@ -104,22 +143,28 @@ class ImageGeneratorTool:
         return response.json()
 
 
-async def generate_recontextualized_images_from_gcs(
+async def generate_recontextualized_images(
     prompt: str,
-    gcs_uri: str,
+    product_uri: str,
     product_description: str,
     sample_count: int,
     tool_context: ToolContext,
-    person_gcs_uri: str = "",
+    mime_type_product_image: str = "image/png",
+    mime_type_person_image: str = "image/png",
+    person_uri: str = "",
 ):
     """Generates recontextualized images using the ImageGeneratorTool from a gcs file location.
 
     Args:
         prompt (str): The prompt for image generation.
-        gcs_uri (str): The GCS URI of the product image.
+        product_uri (str): The product uri. Can either be a local artifact or a gcs uri.
         product_description (str): The description of the product.
         sample_count (int, optional): The number of samples to generate.
-        person_gcs_uri (str, optional): The GCS URI of the person image. Defaults to blank.
+        tool_context (ToolContext): The tool context.
+        mime_type_product_image: str = "image/png" the mime type of the provided product image
+        mime_type_person_image: str = "image/png" the mime type of the provided person image
+        mime_type_person_image: str = "image/png",
+        person_uri (str, optional): The person uri. Can either be a local artifact or a gcs uri. Defaults to blank.
 
     Returns:
         dict: The JSON response from the image generation API.
@@ -129,9 +174,36 @@ async def generate_recontextualized_images_from_gcs(
     except Exception as e:
         return {"Status": "generation_error", "Error": str(e)}
 
-    returned_data = image_generator.call_gcs_location(
-        prompt, gcs_uri, product_description, sample_count, person_gcs_uri
-    )
+    try:
+        if "gs://" == product_uri[:5]:
+            returned_data = image_generator.call_gcs_location(
+                prompt,
+                product_uri,
+                product_description,
+                sample_count,
+                mime_type_product_image,
+                mime_type_person_image,
+                person_uri,
+            )
+        else:
+            product_artifact = await tool_context.load_artifact(product_uri)
+            product_bytes = product_artifact.inline_data.data
+            if person_uri is not "":
+                person_artifact = await tool_context.load_artifact(person_uri)
+                person_bytes = person_artifact.inline_data.data
+            else:
+                person_bytes = b""
+            returned_data = image_generator.call_artifacts(
+                prompt,
+                product_bytes,
+                product_description,
+                sample_count,
+                mime_type_product_image,
+                mime_type_person_image,
+                person_bytes,
+            )
+    except Exception as e:
+        return {"Status": "generation_error", "Error": str(e)}
 
     # save artifacts - expected schema:
     #     {
@@ -175,3 +247,11 @@ def upload_file_to_gcs(
     blob = bucket.blob(os.path.basename(file_path))
     blob.upload_from_string(file_data, content_type=content_type)
     return f"gs://{gcs_bucket}/{os.path.basename(file_path)}"
+
+
+args = {
+    "sample_count": 1,
+    "prompt": "An orange Stanley cup 32 oz with straw, prominently displayed on the snowy, windswept summit of Mount Everest, with a breathtaking panoramic view of the Himalayan peaks in the background under a clear, bright sky. The cup is standing upright, perhaps with a slight dusting of snow, suggesting it has been there for a moment.",
+    "product_description": "orange stanley cup 32 oz with straw",
+    "product_uri": "gs://prism-research-25/products/cup.png",
+}
