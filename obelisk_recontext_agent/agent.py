@@ -1,66 +1,31 @@
 from google.adk.agents import Agent
-from .prompts import ROOT_INSTRUCTION
+from .prompts import ROOT_INSTRUCTION, VEO3_INSTR
 from .tools import (
     generate_recontextualized_images,
+    before_agent_get_user_file,
+    generate_video,
+    concatenate_videos,
 )
 from google.adk.agents.callback_context import CallbackContext
 import uuid
 from google.genai import types
-from typing import Optional
 from google.adk.tools import load_artifacts
+from google.adk.planners import BuiltInPlanner
 
 
-async def before_agent_get_user_file(
-    callback_context: CallbackContext,
-) -> Optional[types.Content]:
-    """
-    Checks for a user-uploaded file before the agent runs.
-
-    If a file is found in the user's message, this callback processes it,
-    converts it to a PNG (if it's a PDF), and saves it as an artifact named
-    'user_uploaded_file'. It then returns a direct confirmation message to the
-    user and halts further agent processing for the current turn.
-
-    If no file is found, it returns None, allowing the agent to proceed normally.
-    """
-
-    parts = []
-    if callback_context.user_content and callback_context.user_content.parts:
-        parts = [
-            p for p in callback_context.user_content.parts if p.inline_data is not None
-        ]
-
-    # if no file then continue to agent by returning empty
-    if not parts:
-        return None
-
-    # if file then save as artifact
-    part = parts[-1]
-
-    file_bytes = part.inline_data.data
-    file_type = part.inline_data.mime_type
-    artifact_key = f"{uuid.uuid4()}.{file_type.split('/')[-1]}"
-
-    # create artifact
-    artifact = types.Part.from_bytes(data=file_bytes, mime_type=file_type)
-
-    # save artifact
-    version = await callback_context.save_artifact(
-        filename=artifact_key, artifact=artifact
-    )
-
-    # Formulate a confirmation message
-    confirmation_message = (
-        f"Thank you! I've successfully processed your uploaded file.\n\n"
-        f"It's now ready for the next step and is stored as artifact with key "
-        f"'{artifact_key}' (version: {version}, size: {len(file_bytes)} bytes).\n\n"
-        f"What would you like to do with it?"
-    )
-    response = types.Content(
-        parts=[types.Part(text=confirmation_message)], role="model"
-    )
-
-    return response
+visual_generator = Agent(
+    model="gemini-2.5-pro",
+    name="visual_generator",
+    description="Generate final visuals using image and video generation tools",
+    planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(include_thoughts=True)),
+    instruction=f"""You are an expert at prompting for VEO3. 
+    Use the existing recontextualized image to create dynamic videos prompted from the user. 
+    Think about the best practices when constructing the prompt for the `generate_video` tool.
+    Think about how to block each scene which is 8 seconds long, use the `concatenate_videos` to concatenate the 8 second generated clips."""
+    + VEO3_INSTR,
+    tools=[generate_video, concatenate_videos],
+    generate_content_config=types.GenerateContentConfig(temperature=1.2),
+)
 
 
 root_agent = Agent(
@@ -68,10 +33,8 @@ root_agent = Agent(
     name="product_recontextualiztion_agent",
     description="An agent that recontextualizes product images into new scenes based on a prompt.",
     instruction=ROOT_INSTRUCTION,
-    tools=[
-        generate_recontextualized_images,
-        load_artifacts
-    ],
+    tools=[generate_recontextualized_images, load_artifacts],
+    sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
         temperature=1.0,
     ),
