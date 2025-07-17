@@ -8,9 +8,8 @@ from .tools import (
     upload_file_to_gcs,
 )
 from google.adk.agents.callback_context import CallbackContext
-import uuid
 from google.genai import types
-# from google.adk.tools import load_artifacts
+from google.adk.tools import load_artifacts
 from google.adk.planners import BuiltInPlanner
 
 
@@ -22,9 +21,9 @@ visual_generator = Agent(
     instruction=f"""You are an expert at prompting for VEO3. 
     Use the existing recontextualized image to create dynamic videos prompted from the user. 
     Think about the best practices when constructing the prompt for the `generate_video` tool.
-    Think about how to block each scene which is 8 seconds long, use the `concatenate_videos` to concatenate the 8 second generated clips."""
+    Think about how to block each scene which is 8 seconds long"""
     + VEO3_INSTR,
-    tools=[generate_video, concatenate_videos],
+    tools=[generate_video, upload_file_to_gcs],
     generate_content_config=types.GenerateContentConfig(temperature=1.2),
 )
 
@@ -34,7 +33,7 @@ root_agent = Agent(
     name="product_recontextualiztion_agent",
     description="An agent that recontextualizes product images into new scenes based on a prompt.",
     instruction=ROOT_INSTRUCTION,
-    tools=[generate_recontextualized_images, upload_file_to_gcs],
+    tools=[generate_recontextualized_images, upload_file_to_gcs, load_artifacts],
     sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
         temperature=1.0,

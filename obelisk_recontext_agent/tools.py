@@ -6,7 +6,7 @@ import uuid
 from google.genai import types
 from google.cloud import storage
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.models import LlmRequest
+from google.adk.models.llm_request import LlmRequest
 import logging
 import base64
 from typing import Optional
@@ -104,6 +104,7 @@ class ImageGeneratorTool:
             )
 
         response = requests.post(self.api_endpoint, headers=headers, json=data)
+        logging.info(f"Raw Request: {response.request}")
         response.raise_for_status()
 
         return response.json()
@@ -166,6 +167,7 @@ class ImageGeneratorTool:
             )
 
         response = requests.post(self.api_endpoint, headers=headers, json=data)
+        logging.info(f"Raw Request: {response.request}")
         response.raise_for_status()
 
         return response.json()
@@ -236,12 +238,20 @@ async def generate_recontextualized_images(
                         "Error": "Cannot mix GCS URIs and artifacts. Please use all GCS URIs or all artifacts.",
                     }
                 product_artifact = await tool_context.load_artifact(uri)
-                product_bytes_list.append(product_artifact.inline_data.data)
+                if product_artifact and product_artifact.inline_data:
+                    product_bytes_list.append(product_artifact.inline_data.data)
 
             # Load person artifact if provided
             if person_uri != "":
                 person_artifact = await tool_context.load_artifact(person_uri)
-                person_bytes = person_artifact.inline_data.data
+                if (
+                    person_artifact
+                    and person_artifact.inline_data
+                    and person_artifact.inline_data.data
+                ):
+                    person_bytes = person_artifact.inline_data.data
+                else:
+                    return {"status": "error", "error": "Person image not found"}
             else:
                 person_bytes = b""
 
@@ -256,53 +266,63 @@ async def generate_recontextualized_images(
             )
     except Exception as e:
         return {"Status": "generation_error", "Error": str(e)}
-
-    # save artifacts - expected schema:
-    #     {
-    # "predictions": [
-    #     {
-    #     "mimeType": "image/png",
-    #     "bytesBase64Encoded": <generated image as encoded byte string>,
-    #     }, ...
-
+    image_filenames = []
     predictions = returned_data["predictions"]
     # iterate over predictions, save to artifacts
     for prediction in predictions:
         image_bytes = prediction["bytesBase64Encoded"]
+        # decode the bytes:
+        image_bytes = base64.b64decode(image_bytes)
         filename = uuid.uuid4()
         await tool_context.save_artifact(
             f"{filename}.png",
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
         )
+        image_filenames.append(f"{filename}.png")
         # save the file locally for gcs upload
         # upload_file_to_gcs(file_path=f"{filename}.png", file_data=image_bytes)
-    return {"status": "complete", "image_filename": f"{filename}.png"}
+    return {"status": "complete", "image_filenames": image_filenames}
 
 
 async def upload_file_to_gcs(
     file_path: str,
-    # file_data: bytes,
     tool_context: ToolContext,
-    content_type: str = "image/png",
-    gcs_bucket: str = os.environ.get("BUCKET"),
-):
+) -> dict[str, str]:
     """
     Uploads a file to a GCS bucket.
     Args:
         file_path (str): The path to the file to upload.
-        gcs_bucket (str): The name of the GCS bucket.
     Returns:
-        str: The GCS URI of the uploaded file.
+        dict: A dictionary containing the status of the upload and the GCS URI if successful.
     """
-    gcs_bucket = gcs_bucket.replace("gs://", "")
+    gcs_bucket = os.environ.get("BUCKET", "default")
+    bucket_name = gcs_bucket.split("gs://")[1]
     storage_client = storage.Client()
-    bucket = storage_client.bucket(gcs_bucket)
+    bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(os.path.basename(file_path))
     # get the file bytes:
-    file_artifact = await tool_context.load_artifact(file_path)
-    file_data = file_artifact.inline_data.data
-    blob.upload_from_string(file_data, content_type=content_type)
-    return f"gs://{gcs_bucket}/{os.path.basename(file_path)}"
+    file_artifact = await tool_context.load_artifact(filename=file_path)
+    if (
+        file_artifact
+        and file_artifact.inline_data
+        and file_artifact.inline_data.mime_type
+    ):
+        file_data = file_artifact.inline_data.data
+        content_type = file_artifact.inline_data.mime_type
+        blob.upload_from_string(file_data, content_type=content_type)
+        # setup the gcs uri state variable if empty:
+        if not tool_context.state.get("recontextualized_image_gcs_uri"):
+            tool_context.state["recontextualized_image_gcs_uri"] = []
+        tool_context.state["recontextualized_image_gcs_uri"].append(
+            f"gs://{bucket_name}/{file_path}"
+        )
+
+        return {
+            "status": "ok",
+            "gsc_uri": f"gs://{bucket_name}/{file_path}",
+        }
+    else:
+        return {"status": "error", "error": "File not found"}
 
 
 # Example usage with multiple product images
@@ -343,20 +363,21 @@ async def before_agent_get_user_file(
 
     saved_artifacts = []
     for part in parts:
-        file_bytes = part.inline_data.data
-        file_type = part.inline_data.mime_type
-        artifact_key = f"{uuid.uuid4()}.{file_type.split('/')[-1]}"
+        if part.inline_data and part.inline_data.data and part.inline_data.mime_type:
+            file_bytes = part.inline_data.data
+            file_type = part.inline_data.mime_type
+            artifact_key = f"{uuid.uuid4()}.{file_type.split('/')[-1]}"
 
-        # create artifact
-        artifact = types.Part.from_bytes(data=file_bytes, mime_type=file_type)
+            # create artifact
+            artifact = types.Part.from_bytes(data=file_bytes, mime_type=file_type)
 
-        # save artifact
-        version = await callback_context.save_artifact(
-            filename=artifact_key, artifact=artifact
-        )
-        saved_artifacts.append(
-            {"key": artifact_key, "version": version, "size": len(file_bytes)}
-        )
+            # save artifact
+            version = await callback_context.save_artifact(
+                filename=artifact_key, artifact=artifact
+            )
+            saved_artifacts.append(
+                {"key": artifact_key, "version": version, "size": len(file_bytes)}
+            )
 
     # Formulate a confirmation message
     if len(saved_artifacts) == 1:
@@ -412,7 +433,7 @@ async def generate_video(
     number_of_videos: int = 1,
     # aspect_ratio: str = "16:9",
     negative_prompt: str = "",
-    existing_image_filename: str = "",
+    existing_image_gcs_uri: str = "",
 ):
     f"""Generates a video based on the prompt for VEO3.
 
@@ -421,10 +442,10 @@ async def generate_video(
         tool_context (ToolContext): The tool context.
         number_of_videos (int, optional): The number of videos to generate. Defaults to 1.
         negative_prompt (str, optional): The negative prompt to use. Defaults to "".
+        existing_image_gcs_uri (str, optional): The existing image filename, use the saved gcs locations from the `recontextualized_image_gcs_uri` state variable
 
     Returns:
         dict: status dict
-
 
     """
     gen_config = GenerateVideosConfig(
@@ -433,18 +454,17 @@ async def generate_video(
         output_gcs_uri=os.environ["BUCKET"],
         negative_prompt=negative_prompt,
     )
-    if existing_image_filename != "":
-        gcs_location = f"{os.environ['BUCKET']}/{existing_image_filename}"
-        existing_image = types.Image(gcs_uri=gcs_location, mime_type="image/png")
+    if existing_image_gcs_uri != "":
+        existing_image = types.Image(gcs_uri=existing_image_gcs_uri, mime_type="image/png")
         operation = client.models.generate_videos(
-            model="veo-3.0-generate-preview",
+            model="veo-2.0-generate-001",
             prompt=prompt,
             image=existing_image,
             config=gen_config,
         )
     else:
         operation = client.models.generate_videos(
-            model="veo-3.0-generate-preview", prompt=prompt, config=gen_config
+            model="veo-2.0-generate-001", prompt=prompt, config=gen_config
         )
     while not operation.done:
         time.sleep(15)
@@ -454,21 +474,25 @@ async def generate_video(
     if operation.error:
         return {"status": f"failed due to error: {operation.error}"}
 
-    if operation.response:
+    if operation.response and operation.result and operation.result.generated_videos:
 
         for generated_video in operation.result.generated_videos:
-            video_uri = generated_video.video.uri
-            filename = uuid.uuid4()
-            BUCKET = os.getenv("BUCKET")
-            video_bytes = download_blob(
-                BUCKET.replace("gs://", ""),
-                video_uri.replace(BUCKET, "")[1:],  # get rid of slash
-            )
-            print(f"The location for this video is here: {filename}.mp4")
-            await tool_context.save_artifact(
-                f"{filename}.mp4",
-                types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
-            )
+            if generated_video and generated_video.video and generated_video.video.uri:
+                video_uri = generated_video.video.uri
+                filename = uuid.uuid4()
+                BUCKET = os.getenv("BUCKET")
+                if BUCKET:
+                    video_bytes = download_blob(
+                        BUCKET.replace("gs://", ""),
+                        video_uri.replace(BUCKET, "")[1:],  # get rid of slash
+                    )
+                    print(f"The location for this video is here: {filename}.mp4")
+                    await tool_context.save_artifact(
+                        f"{filename}.mp4",
+                        types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
+                    )
+                else:
+                    return {"status": "error", "error": "BUCKET not set"}
         return {"status": "ok", "video_filename": f"{filename}.mp4"}
 
 
@@ -503,15 +527,15 @@ async def concatenate_videos(
                         "status": "failed",
                         "error": f"Could not load artifact: {video_filename}",
                     }
+                if video_part.inline_data and video_part.inline_data.data:
+                    # Extract bytes from the Part object
+                    video_bytes = video_part.inline_data.data
 
-                # Extract bytes from the Part object
-                video_bytes = video_part.inline_data.data
-
-                # Save locally for ffmpeg processing
-                local_path = os.path.join(temp_dir, f"video_{idx}.mp4")
-                with open(local_path, "wb") as f:
-                    f.write(video_bytes)
-                local_video_paths.append(local_path)
+                    # Save locally for ffmpeg processing
+                    local_path = os.path.join(temp_dir, f"video_{idx}.mp4")
+                    with open(local_path, "wb") as f:
+                        f.write(video_bytes)
+                    local_video_paths.append(local_path)
 
             # Create output filename
             if concept_name:
@@ -560,19 +584,9 @@ async def concatenate_videos(
                 types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
             )
 
-            # Also upload to GCS for persistence
-            gcs_uri = upload_file_to_gcs(
-                file_path=output_filename,
-                file_data=video_bytes,
-                content_type="video/mp4",
-            )
-            new_entry = {output_filename: gcs_uri}
-            tool_context.state["artifact_keys"]["video_creatives"].update(new_entry)
-
             return {
                 "status": "ok",
                 "video_filename": output_filename,
-                "gcs_uri": gcs_uri,
                 "num_videos_concatenated": len(video_filenames),
             }
 

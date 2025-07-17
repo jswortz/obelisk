@@ -1,5 +1,5 @@
 [project]
-name = "obelisk-recontext-agent"
+name = "obelisk_recontext_agent"
 version = "0.1.0"
 description = ""
 authors = [
@@ -16,8 +16,7 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [{include = "obelisk-recontext-agent"}]
-
+packages = [{include = "obelisk_recontext_agent"}]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
