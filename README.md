@@ -1,8 +1,8 @@
 # Obelisk Recontextualization Agent
 
-![image](img/maebelle1.png)
-![image](img/75f4cb7b-bbba-4306-b498-9994df85dee4.png)
-![image](img/088045D8-B45D-4B1F-857F-A4C3FD27140E_4_5005_c.jpeg)
+<img src="img/maebelle1.png" width=300px/>
+<img src="img/75f4cb7b-bbba-4306-b498-9994df85dee4.png" width=300px/>
+<img src="img/088045D8-B45D-4B1F-857F-A4C3FD27140E_4_5005_c.jpeg">
 
 This agent recontextualizes product images into new scenes based on a user's prompt. It can take a product image from a Google Cloud Storage (GCS) URI or a local file artifact, and then generate a new image with the product in a different setting.
 
