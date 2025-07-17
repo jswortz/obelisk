@@ -58,7 +58,7 @@ Make sure to add the Vertex AI Admin and Service Agent roles to the Service Agen
 Also make sure the above service account has access to read/write from the `BUCKET` location
 
 
-Create an Agent Engine using the `notebooks/deployment_guide.ipynb` notebook
+Create an Agent Engine using the `deployment_guide.ipynb` notebook
 
 Then note the Agent Engine ID (last numeric portion of the Resource Name). e.g.:
 
