@@ -275,13 +275,14 @@ async def generate_recontextualized_images(
             types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
         )
         # save the file locally for gcs upload
-        upload_file_to_gcs(file_path=f"{filename}.png", file_data=image_bytes)
+        # upload_file_to_gcs(file_path=f"{filename}.png", file_data=image_bytes)
     return {"status": "complete", "image_filename": f"{filename}.png"}
 
 
-def upload_file_to_gcs(
+async def upload_file_to_gcs(
     file_path: str,
-    file_data: bytes,
+    # file_data: bytes,
+    tool_context: ToolContext,
     content_type: str = "image/png",
     gcs_bucket: str = os.environ.get("BUCKET"),
 ):
@@ -297,6 +298,9 @@ def upload_file_to_gcs(
     storage_client = storage.Client()
     bucket = storage_client.bucket(gcs_bucket)
     blob = bucket.blob(os.path.basename(file_path))
+    # get the file bytes:
+    file_artifact = await tool_context.load_artifact(file_path)
+    file_data = file_artifact.inline_data.data
     blob.upload_from_string(file_data, content_type=content_type)
     return f"gs://{gcs_bucket}/{os.path.basename(file_path)}"
 

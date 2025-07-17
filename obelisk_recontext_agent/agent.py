@@ -5,11 +5,12 @@ from .tools import (
     before_agent_get_user_file,
     generate_video,
     concatenate_videos,
+    upload_file_to_gcs,
 )
 from google.adk.agents.callback_context import CallbackContext
 import uuid
 from google.genai import types
-from google.adk.tools import load_artifacts
+# from google.adk.tools import load_artifacts
 from google.adk.planners import BuiltInPlanner
 
 
@@ -33,7 +34,7 @@ root_agent = Agent(
     name="product_recontextualiztion_agent",
     description="An agent that recontextualizes product images into new scenes based on a prompt.",
     instruction=ROOT_INSTRUCTION,
-    tools=[generate_recontextualized_images, load_artifacts],
+    tools=[generate_recontextualized_images, upload_file_to_gcs],
     sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
         temperature=1.0,
