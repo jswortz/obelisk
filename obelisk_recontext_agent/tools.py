@@ -17,7 +17,13 @@ import time
 import subprocess
 import tempfile
 from typing import List
-from google.genai.types import GenerateVideosConfig
+from google.genai.types import GenerateVideosConfig, RecontextImageConfig, Image
+from google.genai.types import (
+    RawReferenceImage,
+    MaskReferenceImage,
+    MaskReferenceConfig,
+    EditImageConfig,
+)
 
 
 client = genai.Client()
@@ -26,272 +32,80 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-obelisk-dev")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 
-class ImageGeneratorTool:
-    def __init__(self, project_id: str, region: str):
-        self.project_id = project_id
-        self.region = region
-        self.api_endpoint = f"https://{self.region}-aiplatform.googleapis.com/v1/projects/{self.project_id}/locations/{self.region}/publishers/google/models/imagen-product-recontext-preview-06-30:predict"
-
-    def get_access_token(self):
-        credentials, _ = default()
-        credentials.refresh(Request())
-        return credentials.token
-
-    def call_artifacts(
-        self,
-        prompt: str,
-        product_bytes_list: list[bytes],
-        product_description: str,
-        sample_count: int = 1,
-        mime_type_product_images: Optional[list[str]] = None,
-        mime_type_person_image: str = "image/png",
-        person_bytes: bytes = b"",
-    ):
-
-        # Set default mime types if not provided
-        if mime_type_product_images is None:
-            mime_type_product_images = ["image/png"] * len(product_bytes_list)
-
-        # Base64 encode the product images
-        product_images_data = []
-        for product_bytes, mime_type in zip(
-            product_bytes_list, mime_type_product_images
-        ):
-            encoded_product_image = base64.b64encode(product_bytes)
-            encoded_product_image_b64 = encoded_product_image.decode("utf-8")
-            product_images_data.append(
-                {
-                    "image": {
-                        "bytesBase64Encoded": encoded_product_image_b64,
-                        "mimeType": mime_type,
-                    },
-                    "productConfig": {
-                        "productDescription": product_description,
-                    },
-                }
-            )
-
-        # Base64 encode the person image
-        encoded_person_image = base64.b64encode(person_bytes)
-        encoded_person_image_b64 = encoded_person_image.decode("utf-8")
-
-        access_token = self.get_access_token()
-
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-
-        data = {
-            "instances": [
-                {
-                    "prompt": prompt,
-                    "productImages": product_images_data,
-                }
-            ],
-            "parameters": {"sampleCount": sample_count},
-        }
-        if person_bytes != b"":
-            data["instances"][0].update(
-                {
-                    "personImage": {
-                        "image": {
-                            "bytesBase64Encoded": encoded_person_image_b64,
-                            "mimeType": mime_type_person_image,
-                        }
-                    }
-                }
-            )
-
-        response = requests.post(self.api_endpoint, headers=headers, json=data)
-        logging.info(f"Raw Request: {response.request}")
-        response.raise_for_status()
-
-        return response.json()
-
-    def call_gcs_location(
-        self,
-        prompt: str,
-        product_image_gcs_uris: list[str],
-        product_description: str,
-        sample_count: int = 1,
-        mime_type_product_images: Optional[list[str]] = None,
-        mime_type_person_image: str = "image/png",
-        person_image_gcs_uri: str = "",
-    ):
-        access_token = self.get_access_token()
-
-        # Set default mime types if not provided
-        if mime_type_product_images is None:
-            mime_type_product_images = ["image/png"] * len(product_image_gcs_uris)
-
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-
-        # Build product images data
-        product_images_data = []
-        for gcs_uri, mime_type in zip(product_image_gcs_uris, mime_type_product_images):
-            product_images_data.append(
-                {
-                    "image": {
-                        "gcsUri": gcs_uri,
-                        "mimeType": mime_type,
-                    },
-                    "productConfig": {
-                        "productDescription": product_description,
-                    },
-                }
-            )
-
-        data = {
-            "instances": [
-                {
-                    "prompt": prompt,
-                    "productImages": product_images_data,
-                }
-            ],
-            "parameters": {"sampleCount": sample_count},
-        }
-        if person_image_gcs_uri != "":
-            data["instances"][0].update(
-                {
-                    "personImage": {
-                        "image": {
-                            "gcsUri": person_image_gcs_uri,
-                            "mimeType": mime_type_person_image,
-                        }
-                    }
-                }
-            )
-
-        response = requests.post(self.api_endpoint, headers=headers, json=data)
-        logging.info(f"Raw Request: {response.request}")
-        response.raise_for_status()
-
-        return response.json()
-
-
-async def generate_recontextualized_images(
-    prompt: str,
-    product_uris: list[str],
-    product_description: str,
-    sample_count: int,
-    tool_context: ToolContext,
-    mime_type_product_images: Optional[list[str]] = None,
-    mime_type_person_image: str = "image/png",
-    person_uri: str = "",
+async def recontext_image_background(
+    image_location: str, prompt: str, tool_context: ToolContext
 ):
-    """Generates recontextualized images using the ImageGeneratorTool from gcs file locations or artifacts.
+    """Recontextualizes an image by changing its background.
 
     Args:
-        prompt (str): The prompt for image generation.
-        product_uris (list[str]): List of product uris (1-3 images). Can be local artifacts or gcs uris.
-        product_description (str): The description of the product (applies to all images).
-        sample_count (int): The number of samples to generate.
-        tool_context (ToolContext): The tool context.
-        mime_type_product_images (list[str], optional): List of mime types for product images. Defaults to "image/png" for all.
-        mime_type_person_image (str): The mime type of the provided person image. Defaults to "image/png".
-        person_uri (str, optional): The person uri. Can either be a local artifact or a gcs uri. Defaults to blank.
-
-    Returns:
-        dict: The JSON response from the image generation API.
+        image_location (str): The GCS URI of the image to recontextualize.
+        prompt (str): The prompt describing the new background.
     """
-    # Validate inputs
-    if not product_uris or len(product_uris) > 3:
-        return {
-            "Status": "validation_error",
-            "Error": "Please provide 1-3 product images",
-        }
 
-    # Set default mime types if not provided
-    if mime_type_product_images is None:
-        mime_type_product_images = ["image/png"] * len(product_uris)
+    client = genai.Client()
 
-    try:
-        image_generator = ImageGeneratorTool(project_id=PROJECT_ID, region=LOCATION)
-    except Exception as e:
-        return {"Status": "generation_error", "Error": str(e)}
+    raw_ref = types._ReferenceImageAPI(
+        reference_image=Image.from_file(location=image_location), reference_id=0
+    )
 
-    try:
-        # Check if all product URIs are GCS URIs
-        all_gcs = all(uri.startswith("gs://") for uri in product_uris)
+    mask_ref = types._ReferenceImageAPI(
+        reference_id=1,
+        reference_image=None,
+        mask_image_config=MaskReferenceConfig(
+            mask_mode=types.MaskReferenceMode.MASK_MODE_BACKGROUND,
+        ),
+    )
 
-        if all_gcs:
-            returned_data = image_generator.call_gcs_location(
-                prompt,
-                product_uris,
-                product_description,
-                sample_count,
-                mime_type_product_images,
-                mime_type_person_image,
-                person_uri,
-            )
-        else:
-            # Load product artifacts
-            product_bytes_list = []
-            for uri in product_uris:
-                if uri.startswith("gs://"):
-                    return {
-                        "Status": "validation_error",
-                        "Error": "Cannot mix GCS URIs and artifacts. Please use all GCS URIs or all artifacts.",
-                    }
-                product_artifact = await tool_context.load_artifact(uri)
-                if product_artifact and product_artifact.inline_data:
-                    product_bytes_list.append(product_artifact.inline_data.data)
-
-            # Load person artifact if provided
-            if person_uri != "":
-                person_artifact = await tool_context.load_artifact(person_uri)
-                if (
-                    person_artifact
-                    and person_artifact.inline_data
-                    and person_artifact.inline_data.data
-                ):
-                    person_bytes = person_artifact.inline_data.data
-                else:
-                    return {"status": "error", "error": "Person image not found"}
+    image = client.models.edit_image(
+        model="imagen-3.0-capability-001",
+        prompt=prompt,
+        reference_images=[raw_ref, mask_ref],
+        config=EditImageConfig(
+            edit_mode=types.EditMode.EDIT_MODE_BGSWAP,
+        ),
+    )
+    filenames = []
+    if image and image.generated_images:
+        logging.info(f"Successfully generated {len(image.generated_images)} image(s).")
+        for generated_image in image.generated_images:
+            if generated_image.image and generated_image.image.image_bytes:
+                generated_image_bytes = generated_image.image.image_bytes
+                filename = f"{uuid.uuid4()}.png"
+                logging.info(f"Saving generated image as artifact: {filename}")
+                filenames.append(filename)
+                await tool_context.save_artifact(
+                    filename,
+                    types.Part.from_bytes(
+                        data=generated_image_bytes,
+                        mime_type="image/png",
+                    ),
+                )
+                await upload_file_to_gcs(
+                    file_path=filename,
+                    tool_context=tool_context,
+                    state_var_name="recontextualized_image_gcs_uri",
+                )
+                logging.info(f"Successfully saved artifact '{filename}'.")
             else:
-                person_bytes = b""
-
-            returned_data = image_generator.call_artifacts(
-                prompt,
-                product_bytes_list,
-                product_description,
-                sample_count,
-                mime_type_product_images,
-                mime_type_person_image,
-                person_bytes,
-            )
-    except Exception as e:
-        return {"Status": "generation_error", "Error": str(e)}
-    image_filenames = []
-    predictions = returned_data["predictions"]
-    # iterate over predictions, save to artifacts
-    for prediction in predictions:
-        image_bytes = prediction["bytesBase64Encoded"]
-        # decode the bytes:
-        image_bytes = base64.b64decode(image_bytes)
-        filename = uuid.uuid4()
-        await tool_context.save_artifact(
-            f"{filename}.png",
-            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-        )
-        image_filenames.append(f"{filename}.png")
-        # save the file locally for gcs upload
-        # upload_file_to_gcs(file_path=f"{filename}.png", file_data=image_bytes)
-    return {"status": "complete", "image_filenames": image_filenames}
+                logging.warning(f"Skipping an empty generated image in the response.")
+        return {
+            "status": "complete",
+            "image_filenames": filenames,
+        }
 
 
 async def upload_file_to_gcs(
     file_path: str,
     tool_context: ToolContext,
+    state_var_name: str,
 ) -> dict[str, str]:
     """
     Uploads a file to a GCS bucket.
     Args:
         file_path (str): The path to the file to upload.
+        tool_context (ToolContext): The tool context.
+        state_var_name (str): The name of the state variable to store the GCS URI.
+
     Returns:
         dict: A dictionary containing the status of the upload and the GCS URI if successful.
     """
@@ -311,11 +125,9 @@ async def upload_file_to_gcs(
         content_type = file_artifact.inline_data.mime_type
         blob.upload_from_string(file_data, content_type=content_type)
         # setup the gcs uri state variable if empty:
-        if not tool_context.state.get("recontextualized_image_gcs_uri"):
-            tool_context.state["recontextualized_image_gcs_uri"] = []
-        tool_context.state["recontextualized_image_gcs_uri"].append(
-            f"gs://{bucket_name}/{file_path}"
-        )
+        if not tool_context.state.get(state_var_name, False):
+            tool_context.state[state_var_name] = []
+        tool_context.state[state_var_name].append(f"gs://{bucket_name}/{file_path}")
 
         return {
             "status": "ok",
@@ -350,7 +162,6 @@ async def before_agent_get_user_file(
 
     If no file is found, it returns None, allowing the agent to proceed normally.
     """
-
     parts = []
     if callback_context.user_content and callback_context.user_content.parts:
         parts = [
@@ -430,18 +241,18 @@ def download_blob(bucket_name, source_blob_name):
 async def generate_video(
     prompt: str,
     tool_context: ToolContext,
-    number_of_videos: int = 1,
+    number_of_videos: int,
     # aspect_ratio: str = "16:9",
-    negative_prompt: str = "",
-    existing_image_gcs_uri: str = "",
+    negative_prompt: str,
+    existing_image_gcs_uri: str,
 ):
     f"""Generates a video based on the prompt for VEO3.
 
     Args:
         prompt (str): The prompt to generate the video from.
         tool_context (ToolContext): The tool context.
-        number_of_videos (int, optional): The number of videos to generate. Defaults to 1.
-        negative_prompt (str, optional): The negative prompt to use. Defaults to "".
+        number_of_videos (int, optional): The number of videos to generate.
+        negative_prompt (str, optional): The negative prompt to use. 
         existing_image_gcs_uri (str, optional): The existing image filename, use the saved gcs locations from the `recontextualized_image_gcs_uri` state variable
 
     Returns:
@@ -455,16 +266,18 @@ async def generate_video(
         negative_prompt=negative_prompt,
     )
     if existing_image_gcs_uri != "":
-        existing_image = types.Image(gcs_uri=existing_image_gcs_uri, mime_type="image/png")
+        existing_image = types.Image(
+            gcs_uri=existing_image_gcs_uri, mime_type="image/png"
+        )
         operation = client.models.generate_videos(
-            model="veo-2.0-generate-001",
+            model="veo-3.0-generate-preview",
             prompt=prompt,
             image=existing_image,
             config=gen_config,
         )
     else:
         operation = client.models.generate_videos(
-            model="veo-2.0-generate-001", prompt=prompt, config=gen_config
+            model="veo-3.0-generate-preview", prompt=prompt, config=gen_config
         )
     while not operation.done:
         time.sleep(15)
@@ -597,3 +410,95 @@ async def concatenate_videos(
         }
     except Exception as e:
         return {"status": "failed", "error": str(e)}
+
+
+async def generate_virtual_try_on_images(
+    person_uri: str,
+    product_uri: str,
+    number_of_images: int,
+    tool_context: ToolContext,
+):
+    """Generates a virtual try-on image from a person and product image.
+
+    Args:
+        person_uri (str): The artifact URI for the person's image.
+        product_uri (str): The artifact URI for the product image.
+        number_of_images (int): The number of images to generate.
+        tool_context (ToolContext): The tool context.
+
+    Returns:
+        dict: The JSON response with status and generated image filename.
+    """
+    logging.info(
+        f"Starting virtual try-on generation with person_uri: {person_uri} and product_uri: {product_uri}"
+    )
+    try:
+        # Load person artifact
+        logging.info(f"Loading person artifact: {person_uri}")
+        person_upload_result = await upload_file_to_gcs(
+            file_path=person_uri,
+            tool_context=tool_context,
+            state_var_name="person_gcs_uri",
+        )
+        person_gcs_uri = person_upload_result["gsc_uri"]
+        logging.info(f"Loading product artifact: {product_uri}")
+        product_upload_result = await upload_file_to_gcs(
+            file_path=product_uri,
+            tool_context=tool_context,
+            state_var_name="product_gcs_uri",
+        )
+        product_gcs_uri = product_upload_result["gsc_uri"]
+        logging.info("Calling the virtual try-on model 'virtual-try-on-preview-08-04'")
+        image = client.models.recontext_image(
+            model="virtual-try-on-preview-08-04",
+            source=types.RecontextImageSource(
+                person_image=Image.from_file(location=f"{person_gcs_uri}"),
+                # person_image=person_part,
+                product_images=[
+                    types.ProductImage(
+                        product_image=Image.from_file(location=f"{product_gcs_uri}")
+                    )
+                ],
+            ),
+            config=RecontextImageConfig(number_of_images=number_of_images),
+        )
+        logging.info(f"Received response from the model.")
+
+        filenames = []
+        if image and image.generated_images:
+            logging.info(
+                f"Successfully generated {len(image.generated_images)} image(s)."
+            )
+            for generated_image in image.generated_images:
+                if generated_image.image and generated_image.image.image_bytes:
+                    generated_image_bytes = generated_image.image.image_bytes
+                    filename = f"{uuid.uuid4()}.png"
+                    logging.info(f"Saving generated image as artifact: {filename}")
+                    filenames.append(filename)
+                    await tool_context.save_artifact(
+                        filename,
+                        types.Part.from_bytes(
+                            data=generated_image_bytes,
+                            mime_type="image/png",
+                        ),
+                    )
+                    await upload_file_to_gcs(
+                        file_path=filename,
+                        tool_context=tool_context,
+                        state_var_name="virtual_product_try_on_gcs_uri",
+                    )
+                    logging.info(f"Successfully saved artifact '{filename}'.")
+                else:
+                    logging.warning(
+                        f"Skipping an empty generated image in the response."
+                    )
+            return {
+                "status": "complete",
+                "image_filenames": filenames,
+            }
+    except Exception as e:
+        logging.error(
+            f"An unexpected error occurred in generate_virtual_try_on_image: {e}",
+            exc_info=True,
+        )
+        return {"Status": "generation_error", "Error": str(e)}

@@ -12,6 +12,40 @@ Obelisk is a Python-based AI agent that recontextualizes product images using Go
 3. **Specify Prompt**: Specify a prompt concept for Veo.
 4. **Animate**: Use Veo to animate the image from the recontextualized image.
 
+## Virtual Try-On
+
+In addition to recontextualization, Obelisk now supports virtual try-on functionality using the Generative AI SDK. This allows you to generate images of a person wearing a specific clothing product.
+
+### Using the GenAI SDK for Virtual Try-On
+
+Here is a code snippet demonstrating how to use the `virtual-try-on-preview-08-04` model with the Python GenAI SDK:
+
+```python
+from google import genai
+from google.genai.types import RecontextImageSource, ProductImage
+
+client = genai.Client()
+
+# TODO(developer): Update and un-comment below line
+# output_file = "output-image.png"
+
+image = client.models.recontext_image(
+    model="virtual-try-on-preview-08-04",
+    source=RecontextImageSource(
+        person_image=Image.from_file(location="test_resources/man.png"),
+        product_images=[ProductImage(product_image=Image.from_file(location="test_resources/sweater.jpg"))]
+    )
+)
+
+image.generated_images[0].image.save(output_file)
+
+print(f"Created output image using {len(image.generated_images[0].image.image_bytes)} bytes")
+# Example response:
+# Created output image using 1234567 bytes
+```
+
+This code snippet shows how to provide a person's image and a product image to the model to generate a virtual try-on image. You will need to replace the placeholder file paths with the actual paths to your images.
+
 ## Essential Commands
 
 ### Environment Setup
@@ -68,6 +102,7 @@ hello!
 - **AI Models**: 
   - Agent: Gemini 2.5 Flash
   - Image Generation: `imagen-product-recontext-preview-06-30`
+  - Virtual Try-On: `virtual-try-on-preview-08-04`
   
 - **Image Handling**:
   - Supports both GCS URIs and local file uploads

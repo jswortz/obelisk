@@ -13,6 +13,27 @@ This agent recontextualizes product images into new scenes based on a user's pro
 - **Person Image Support:** The agent can optionally take a person's image and include it in the generated scene.
 - **Multiple Image Generation:** The agent can generate multiple images in a single request.
 
+## Virtual Try-On
+
+This agent also supports virtual try-on functionality, allowing you to generate an image of a person wearing a specific clothing product.
+
+### How it Works
+
+The virtual try-on feature uses the `virtual-try-on-preview-08-04` model. You need to provide two images:
+
+1.  **A person's image:** An image of a person.
+2.  **A product image:** An image of a clothing item.
+
+The agent uses the `generate_virtual_try_on_images` tool to combine these images and generate a new image of the person wearing the product.
+
+### Example Usage
+
+To use the virtual try-on feature, you would first upload an image of a person and an image of a product. Then, you can instruct the agent like this:
+
+`"Use the image of the person and the sweater to generate a virtual try-on image."`
+
+The agent will then process the images and return a new image with the person wearing the sweater.
+
 Setup:
 
 ```
@@ -23,8 +44,8 @@ gsutil cp -r img/*.png $BUCKET/products/
 
 The agent uses the `imagen-product-recontext-preview-06-30` model on Google Cloud's AI Platform to perform the image generation. It has two main tools:
 
-- `generate_recontextualized_images_from_gcs`: This tool is used when the product image is provided as a GCS URI.
-- `generate_recontextualized_images_from_artifact`: This tool is used when the product image is provided as a local file artifact.
+- `recontext_image_background`: This tool is used when the product image is provided as a GCS URI.
+
 
 The agent will automatically select the appropriate tool based on the user's input. After generating the images, they are saved as artifacts and uploaded to a GCS bucket.
 
@@ -87,7 +108,8 @@ Options:
   -i, --agent-id <id>              Agent ID (required for update/delete)
   -t, --instructions <text>        Agent instructions, use the root agent instructions here (required for create)
   -u, --icon-uri <uri>             Icon URI (optional)
-  -l, --location <location>        Location (default: us)
+  -l, --location <location>        Agent Space location (default: us)
+      --agent-engine-location <location> Agent Engine location (default: us-central1)
   -h, --help                       Display this help message
 ```
 
