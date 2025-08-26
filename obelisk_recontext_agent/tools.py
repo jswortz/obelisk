@@ -295,7 +295,10 @@ async def generate_video(
     try:
         existing_image_gcs_uri = tool_context.state["selected_file"]
     except KeyError:
-        return {"status": "error", "error": "State variable not found, be sure the file_selector tool was run"}
+        return {
+            "status": "error",
+            "error": "State variable not found, be sure the file_selector tool was run",
+        }
 
     existing_image = types.Image(gcs_uri=existing_image_gcs_uri, mime_type="image/png")
     operation = client.models.generate_videos(
@@ -461,19 +464,26 @@ async def generate_virtual_try_on_images(
     try:
         # Load person artifact
         logging.info(f"Loading person artifact: {person_uri}")
-        person_upload_result = await upload_file_to_gcs(
-            file_path=person_uri,
-            tool_context=tool_context,
-            state_var_name="person_gcs_uri",
-        )
-        person_gcs_uri = person_upload_result["gsc_uri"]
+        # check if the person uri is a gcs one
+        if person_uri.startswith("gs://"):
+            person_gcs_uri = person_uri
+        else:
+            person_upload_result = await upload_file_to_gcs(
+                file_path=person_uri,
+                tool_context=tool_context,
+                state_var_name="person_gcs_uri",
+            )
+            person_gcs_uri = person_upload_result["gsc_uri"]
         logging.info(f"Loading product artifact: {product_uri}")
-        product_upload_result = await upload_file_to_gcs(
-            file_path=product_uri,
-            tool_context=tool_context,
-            state_var_name="product_gcs_uri",
-        )
-        product_gcs_uri = product_upload_result["gsc_uri"]
+        if product_uri.startswith("gs://"):
+            product_gcs_uri = product_uri
+        else:
+            product_upload_result = await upload_file_to_gcs(
+                file_path=product_uri,
+                tool_context=tool_context,
+                state_var_name="product_gcs_uri",
+            )
+            product_gcs_uri = product_upload_result["gsc_uri"]
         logging.info("Calling the virtual try-on model 'virtual-try-on-preview-08-04'")
         image = client.models.recontext_image(
             model="virtual-try-on-preview-08-04",
