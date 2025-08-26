@@ -1,8 +1,8 @@
 # Obelisk Virtual Try-On and Recontextualization Agent
 
-<img src="img/maebelle1.png" width=300px/>
-<img src="img/75f4cb7b-bbba-4306-b498-9994df85dee4.png" width=300px/>
-<img src="img/088045D8-B45D-4B1F-857F-A4C3FD27140E_4_5005_c.jpeg">
+<img src="img/google-t-shirt.png" width=300px/>
+<img src="img/person-try-on.png" width=300px/>
+<img src="img/vto-output.png">
 
 This agent first generates a virtual try-on image of a person wearing a product, then recontextualizes the image by changing its background based on a user's prompt.
 
@@ -15,10 +15,11 @@ This agent first generates a virtual try-on image of a person wearing a product,
 
 ## How it Works
 
-The agent follows a two-step process:
+The agent follows a multi-step process:
 
 1.  **Virtual Try-On:** It uses the `virtual-try-on-preview-08-04` model to generate an image of a person wearing a product. This is handled by the `generate_virtual_try_on_images` tool.
 2.  **Background Swap:** It then uses the `imagen-3.0-capability-001` model to edit the background of the virtual try-on image. This is done with the `recontext_image_background` tool, which leverages the background swap mode.
+3.  **Animation with VEO3:** It then uses the `veo-3.0-generate-preview` model to animate the final image. This is handled by the `generate_video` tool.
 
 All generated images are saved as artifacts and uploaded to a GCS bucket.
 
