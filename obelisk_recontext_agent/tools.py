@@ -33,35 +33,41 @@ LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 
 async def recontext_image_background(
-    image_location: str, prompt: str, tool_context: ToolContext
+    image_selection: int, prompt: str, n_images: int, tool_context: ToolContext
 ):
     """Recontextualizes an image by changing its background.
 
     Args:
-        image_location (str): The GCS URI of the image to recontextualize.
+        image_selection (int): The index (zero-based)of the image to recontextualize from the virtual_product_try_on_gcs_uri state variable
         prompt (str): The prompt describing the new background.
+        n_images (int): The number of images to generate.
+        tool_context (ToolContext): The tool context.
     """
-
+    # image_location = tool_context.state["virtual_product_try_on_gcs_uri"][
+    #     image_selection
+    # ]
+    image_location = tool_context.state["selected_file"]
     client = genai.Client()
 
-    raw_ref = types._ReferenceImageAPI(
-        reference_image=Image.from_file(location=image_location), reference_id=0
-    )
-
-    mask_ref = types._ReferenceImageAPI(
+    product_image = Image(gcs_uri=image_location)
+    raw_ref_image = RawReferenceImage(reference_image=product_image, reference_id=0)
+    mask_ref_image = MaskReferenceImage(
         reference_id=1,
         reference_image=None,
-        mask_image_config=MaskReferenceConfig(
-            mask_mode=types.MaskReferenceMode.MASK_MODE_BACKGROUND,
+        config=MaskReferenceConfig(
+            mask_mode=types.MaskReferenceMode.MASK_MODE_BACKGROUND
         ),
     )
 
     image = client.models.edit_image(
         model="imagen-3.0-capability-001",
         prompt=prompt,
-        reference_images=[raw_ref, mask_ref],
+        reference_images=[raw_ref_image, mask_ref_image],
         config=EditImageConfig(
             edit_mode=types.EditMode.EDIT_MODE_BGSWAP,
+            number_of_images=n_images,
+            safety_filter_level=types.SafetyFilterLevel.BLOCK_MEDIUM_AND_ABOVE,
+            person_generation=types.PersonGeneration.ALLOW_ADULT,
         ),
     )
     filenames = []
@@ -238,13 +244,34 @@ def download_blob(bucket_name, source_blob_name):
     return blob.download_as_bytes()
 
 
+def file_selector(state_variable: str, index: int, tool_context: ToolContext):
+    """
+    Selects a file from a state variable by index.
+
+    Args:
+        state_variable (str): The name of the state variable containing the list of files.
+        index (int): The zero-based index of the file to select.
+        tool_context (ToolContext): The tool context.
+
+    Returns:
+        dict: A dictionary containing the status and the selected file, or an error message.
+    """
+    try:
+        selected_file = tool_context.state[state_variable][index]
+        tool_context.state["selected_file"] = selected_file
+        return {"status": "ok", "selected_file": selected_file}
+    except KeyError:
+        return {"status": "error", "error": "State variable not found"}
+    except IndexError:
+        return {"status": "error", "error": "Index out of range"}
+
+
 async def generate_video(
     prompt: str,
     tool_context: ToolContext,
     number_of_videos: int,
     # aspect_ratio: str = "16:9",
     negative_prompt: str,
-    existing_image_gcs_uri: str,
 ):
     f"""Generates a video based on the prompt for VEO3.
 
@@ -265,20 +292,19 @@ async def generate_video(
         output_gcs_uri=os.environ["BUCKET"],
         negative_prompt=negative_prompt,
     )
-    if existing_image_gcs_uri != "":
-        existing_image = types.Image(
-            gcs_uri=existing_image_gcs_uri, mime_type="image/png"
-        )
-        operation = client.models.generate_videos(
-            model="veo-3.0-generate-preview",
-            prompt=prompt,
-            image=existing_image,
-            config=gen_config,
-        )
-    else:
-        operation = client.models.generate_videos(
-            model="veo-3.0-generate-preview", prompt=prompt, config=gen_config
-        )
+    try:
+        existing_image_gcs_uri = tool_context.state["selected_file"]
+    except KeyError:
+        return {"status": "error", "error": "State variable not found, be sure the file_selector tool was run"}
+
+    existing_image = types.Image(gcs_uri=existing_image_gcs_uri, mime_type="image/png")
+    operation = client.models.generate_videos(
+        model="veo-3.0-generate-preview",
+        prompt=prompt,
+        image=existing_image,
+        config=gen_config,
+    )
+
     while not operation.done:
         time.sleep(15)
         operation = client.operations.get(operation)
@@ -421,8 +447,8 @@ async def generate_virtual_try_on_images(
     """Generates a virtual try-on image from a person and product image.
 
     Args:
-        person_uri (str): The artifact URI for the person's image.
-        product_uri (str): The artifact URI for the product image.
+        person_uri (str): The URI for the person's image.
+        product_uri (str): The URI for the product image.
         number_of_images (int): The number of images to generate.
         tool_context (ToolContext): The tool context.
 

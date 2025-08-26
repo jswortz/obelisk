@@ -1,53 +1,32 @@
-# Obelisk Recontextualization Agent
+# Obelisk Virtual Try-On and Recontextualization Agent
 
 <img src="img/maebelle1.png" width=300px/>
 <img src="img/75f4cb7b-bbba-4306-b498-9994df85dee4.png" width=300px/>
 <img src="img/088045D8-B45D-4B1F-857F-A4C3FD27140E_4_5005_c.jpeg">
 
-This agent recontextualizes product images into new scenes based on a user's prompt. It can take a product image from a Google Cloud Storage (GCS) URI or a local file artifact, and then generate a new image with the product in a different setting.
+This agent first generates a virtual try-on image of a person wearing a product, then recontextualizes the image by changing its background based on a user's prompt.
 
 ## Features
 
-- **Recontextualize Product Images:**  The core functionality of this agent is to take a product image and place it into a new scene described by a prompt.
-- **GCS and Local Image Support:** The agent can accept product images from either a GCS URI or a local file upload (artifact).
-- **Person Image Support:** The agent can optionally take a person's image and include it in the generated scene.
+- **Virtual Try-On:** The agent's primary function is to generate a realistic image of a person wearing a clothing item.
+- **Background Recontextualization:** After the virtual try-on, the agent can replace the background of the generated image with a new scene described by a prompt, using Imagen 3's image editing capabilities.
+- **GCS and Local Image Support:** The agent can accept person and product images from either a GCS URI or a local file upload (artifact).
 - **Multiple Image Generation:** The agent can generate multiple images in a single request.
 
-## Virtual Try-On
+## How it Works
 
-This agent also supports virtual try-on functionality, allowing you to generate an image of a person wearing a specific clothing product.
+The agent follows a two-step process:
 
-### How it Works
+1.  **Virtual Try-On:** It uses the `virtual-try-on-preview-08-04` model to generate an image of a person wearing a product. This is handled by the `generate_virtual_try_on_images` tool.
+2.  **Background Swap:** It then uses the `imagen-3.0-capability-001` model to edit the background of the virtual try-on image. This is done with the `recontext_image_background` tool, which leverages the background swap mode.
 
-The virtual try-on feature uses the `virtual-try-on-preview-08-04` model. You need to provide two images:
-
-1.  **A person's image:** An image of a person.
-2.  **A product image:** An image of a clothing item.
-
-The agent uses the `generate_virtual_try_on_images` tool to combine these images and generate a new image of the person wearing the product.
-
-### Example Usage
-
-To use the virtual try-on feature, you would first upload an image of a person and an image of a product. Then, you can instruct the agent like this:
-
-`"Use the image of the person and the sweater to generate a virtual try-on image."`
-
-The agent will then process the images and return a new image with the person wearing the sweater.
+All generated images are saved as artifacts and uploaded to a GCS bucket.
 
 Setup:
 
 ```
 gsutil cp -r img/*.png $BUCKET/products/
 ```
-
-## How it Works
-
-The agent uses the `imagen-product-recontext-preview-06-30` model on Google Cloud's AI Platform to perform the image generation. It has two main tools:
-
-- `recontext_image_background`: This tool is used when the product image is provided as a GCS URI.
-
-
-The agent will automatically select the appropriate tool based on the user's input. After generating the images, they are saved as artifacts and uploaded to a GCS bucket.
 
 ## Prerequisites
 
@@ -63,11 +42,11 @@ The agent will automatically select the appropriate tool based on the user's inp
 #### Important
 Make sure images are less than 30 mb
 
-#### Without a person
-`use gs://prism-research-25/products/cup.png and put it on top of mt. everest. the product caption is: orange stanley cup 32 oz with straw`
-
-#### With a person
-`Generate a picture of me in a desert running with these shoes: gs://prism-research-25/products/shoe.png. These are black running shoes. The picture of me is here: gs://prism-research-25/products/a_guy.png`
+1.  **First, upload a person image and a product image.**
+2.  **Then, generate the virtual try-on image:**
+    `"Use the uploaded person and sweater images to generate a virtual try-on image."`
+3.  **Finally, recontextualize the background:**
+    `"Take the generated image and place the person on top of Mt. Everest."`
 
 
 # Deployment to Agentspace

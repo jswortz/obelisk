@@ -10,6 +10,7 @@ from .tools import (
     before_agent_get_user_file,
     generate_video,
     generate_virtual_try_on_images,
+    file_selector,
 )
 from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
@@ -40,6 +41,7 @@ root_agent = Agent(
         recontext_image_background,
         load_artifacts,
         generate_virtual_try_on_images,
+        file_selector,
     ],
     sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
