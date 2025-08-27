@@ -42,13 +42,16 @@ async def edit_image(prompt: str, tool_context: ToolContext):
     """
     client = genai.Client(
         vertexai=True,
-        project="cpg-cdp",
+        project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
         location="global",
     )
     try:
         image_location = tool_context.state["selected_file"]
     except:
-        return {"status": "error", "message": "select the file for editing first using the file selection tool"}
+        return {
+            "status": "error",
+            "message": "select the file for editing first using the file selection tool",
+        }
     bucket = os.environ.get("BUCKET", "default").split("gs://")[1]
     logging.info(f"Selected bucket: {bucket}")
     blob_name = image_location.split("/")[3]  # gs://bucket-name/blob
@@ -102,7 +105,7 @@ async def edit_image(prompt: str, tool_context: ToolContext):
                     state_var_name="recontextualized_image_gcs_uri",
                 )
                 # save the last edited image for continuity
-                tool_context.state["selected_file"] = gcs_upload_result['gcs_uri']
+                tool_context.state["selected_file"] = gcs_upload_result["gcs_uri"]
                 logging.info(f"Successfully saved artifact '{filename}'.")
             else:
                 logging.warning(f"Skipping an empty part in the response.")
