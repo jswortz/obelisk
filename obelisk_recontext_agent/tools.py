@@ -1,29 +1,15 @@
-import requests
-from google.auth import default
-from google.auth.transport.requests import Request
 from google.adk.tools import ToolContext
 import uuid
 from google.genai import types
 from google.cloud import storage
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.models.llm_request import LlmRequest
 import logging
-import base64
 from typing import Optional
 from google import genai
 import os
 import uuid
 import time
-import subprocess
-import tempfile
-from typing import List
 from google.genai.types import GenerateVideosConfig, RecontextImageConfig, Image
-from google.genai.types import (
-    RawReferenceImage,
-    MaskReferenceImage,
-    MaskReferenceConfig,
-    EditImageConfig,
-)
 
 
 client = genai.Client()
@@ -99,13 +85,13 @@ async def edit_image(prompt: str, tool_context: ToolContext):
                         mime_type="image/png",
                     ),
                 )
-                gcs_upload_result = await upload_file_to_gcs(
+                gcs_upload_op = await upload_file_to_gcs(
                     file_path=filename,
                     tool_context=tool_context,
                     state_var_name="recontextualized_image_gcs_uri",
                 )
                 # save the last edited image for continuity
-                tool_context.state["selected_file"] = gcs_upload_result["gcs_uri"]
+                tool_context.state["selected_file"] = gcs_upload_op["gcs_uri"]
                 logging.info(f"Successfully saved artifact '{filename}'.")
             else:
                 logging.warning(f"Skipping an empty part in the response.")
@@ -430,11 +416,12 @@ async def generate_virtual_try_on_images(
                             mime_type="image/png",
                         ),
                     )
-                    await upload_file_to_gcs(
+                    gcs_upload_op = await upload_file_to_gcs(
                         file_path=filename,
                         tool_context=tool_context,
                         state_var_name="virtual_product_try_on_gcs_uri",
                     )
+                    tool_context.state["selected_file"] = gcs_upload_op["gcs_uri"]
                     logging.info(f"Successfully saved artifact '{filename}'.")
                 else:
                     logging.warning(
@@ -446,7 +433,7 @@ async def generate_virtual_try_on_images(
             }
     except Exception as e:
         logging.error(
-            f"An unexpected error occurred in generate_virtual_try_on_image: {e}",
+            f"An unexpected error occurred in generate_virtual_try_on_image: {e}, double check the product and person images are not swapped",
             exc_info=True,
         )
         return {"Status": "generation_error", "Error": str(e)}
