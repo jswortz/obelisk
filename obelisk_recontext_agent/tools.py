@@ -32,50 +32,60 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-obelisk-dev")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 
-async def recontext_image_background(
-    image_selection: int, prompt: str, n_images: int, tool_context: ToolContext
-):
+async def edit_image(prompt: str, tool_context: ToolContext):
     """Recontextualizes an image by changing its background.
 
     Args:
-        image_selection (int): The index (zero-based)of the image to recontextualize from the virtual_product_try_on_gcs_uri state variable
+        image_selection (int): The index (zero-based)of the image to edit
         prompt (str): The prompt describing the new background.
-        n_images (int): The number of images to generate.
         tool_context (ToolContext): The tool context.
     """
-    # image_location = tool_context.state["virtual_product_try_on_gcs_uri"][
-    #     image_selection
-    # ]
-    image_location = tool_context.state["selected_file"]
-    client = genai.Client()
-
-    product_image = Image(gcs_uri=image_location)
-    raw_ref_image = RawReferenceImage(reference_image=product_image, reference_id=0)
-    mask_ref_image = MaskReferenceImage(
-        reference_id=1,
-        reference_image=None,
-        config=MaskReferenceConfig(
-            mask_mode=types.MaskReferenceMode.MASK_MODE_BACKGROUND
-        ),
+    client = genai.Client(
+        vertexai=True,
+        project="cpg-cdp",
+        location="global",
     )
-
-    image = client.models.edit_image(
-        model="imagen-3.0-capability-001",
-        prompt=prompt,
-        reference_images=[raw_ref_image, mask_ref_image],
-        config=EditImageConfig(
-            edit_mode=types.EditMode.EDIT_MODE_BGSWAP,
-            number_of_images=n_images,
-            safety_filter_level=types.SafetyFilterLevel.BLOCK_MEDIUM_AND_ABOVE,
-            person_generation=types.PersonGeneration.ALLOW_ADULT,
-        ),
+    try:
+        image_location = tool_context.state["selected_file"]
+    except:
+        return {"status": "error", "message": "select the file for editing first using the file selection tool"}
+    bucket = os.environ.get("BUCKET", "default").split("gs://")[1]
+    logging.info(f"Selected bucket: {bucket}")
+    blob_name = image_location.split("/")[3]  # gs://bucket-name/blob
+    logging.info(f"Selected blob: {blob_name}")
+    image_to_edit = download_blob(bucket_name=bucket, source_blob_name=blob_name)
+    image_part = types.Part.from_bytes(data=image_to_edit, mime_type="image/png")
+    edit_contents = [
+        types.Content(
+            role="user", parts=[image_part, types.Part.from_text(text=prompt)]
+        )
+    ]
+    generate_content_config = types.GenerateContentConfig(
+        temperature=1,
+        top_p=0.95,
+        max_output_tokens=8192,
+        response_modalities=["TEXT", "IMAGE"],
     )
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-image-preview",
+        contents=edit_contents,
+        config=generate_content_config,
+    )
+    logging.info(f"Received response from the model.")
     filenames = []
-    if image and image.generated_images:
-        logging.info(f"Successfully generated {len(image.generated_images)} image(s).")
-        for generated_image in image.generated_images:
-            if generated_image.image and generated_image.image.image_bytes:
-                generated_image_bytes = generated_image.image.image_bytes
+    if (
+        response
+        and response.candidates
+        and response.candidates[0].content
+        and response.candidates[0].content.parts
+    ):
+        image_parts = [
+            part for part in response.candidates[0].content.parts if part.inline_data
+        ]
+        logging.info(f"Successfully generated {len(image_parts)} image(s).")
+        for part in image_parts:
+            if part.inline_data and part.inline_data.data:
+                generated_image_bytes = part.inline_data.data
                 filename = f"{uuid.uuid4()}.png"
                 logging.info(f"Saving generated image as artifact: {filename}")
                 filenames.append(filename)
@@ -86,14 +96,16 @@ async def recontext_image_background(
                         mime_type="image/png",
                     ),
                 )
-                await upload_file_to_gcs(
+                gcs_upload_result = await upload_file_to_gcs(
                     file_path=filename,
                     tool_context=tool_context,
                     state_var_name="recontextualized_image_gcs_uri",
                 )
+                # save the last edited image for continuity
+                tool_context.state["selected_file"] = gcs_upload_result['gcs_uri']
                 logging.info(f"Successfully saved artifact '{filename}'.")
             else:
-                logging.warning(f"Skipping an empty generated image in the response.")
+                logging.warning(f"Skipping an empty part in the response.")
         return {
             "status": "complete",
             "image_filenames": filenames,
@@ -137,7 +149,7 @@ async def upload_file_to_gcs(
 
         return {
             "status": "ok",
-            "gsc_uri": f"gs://{bucket_name}/{file_path}",
+            "gcs_uri": f"gs://{bucket_name}/{file_path}",
         }
     else:
         return {"status": "error", "error": "File not found"}
@@ -338,109 +350,6 @@ async def generate_video(
         return {"status": "ok", "video_filename": f"{filename}.mp4"}
 
 
-async def concatenate_videos(
-    video_filenames: List[str],
-    tool_context: ToolContext,
-    concept_name: str,
-):
-    """Concatenates multiple videos into a single longer video for a concept.
-
-    Args:
-        video_filenames (List[str]): List of video filenames from tool_context artifacts.
-        tool_context (ToolContext): The tool context.
-        concept_name (str, optional): The name of the concept.
-
-    Returns:
-        dict: Status and the location of the concatenated video file.
-    """
-    if not video_filenames:
-        return {"status": "failed", "error": "No video filenames provided"}
-
-    try:
-        # Create temporary directory for processing
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Load videos from artifacts and save locally
-            local_video_paths = []
-            for idx, video_filename in enumerate(video_filenames):
-                # Load artifact
-                video_part = await tool_context.load_artifact(video_filename)
-                if not video_part:
-                    return {
-                        "status": "failed",
-                        "error": f"Could not load artifact: {video_filename}",
-                    }
-                if video_part.inline_data and video_part.inline_data.data:
-                    # Extract bytes from the Part object
-                    video_bytes = video_part.inline_data.data
-
-                    # Save locally for ffmpeg processing
-                    local_path = os.path.join(temp_dir, f"video_{idx}.mp4")
-                    with open(local_path, "wb") as f:
-                        f.write(video_bytes)
-                    local_video_paths.append(local_path)
-
-            # Create output filename
-            if concept_name:
-                output_filename = f"{concept_name}.mp4"
-            else:
-                output_filename = f"{uuid.uuid4()}.mp4"
-
-            output_path = os.path.join(temp_dir, output_filename)
-
-            if len(local_video_paths) == 1:
-                # If only one video, just copy it
-                subprocess.run(["cp", local_video_paths[0], output_path], check=True)
-            else:
-                # Create ffmpeg filter complex for concatenation with transitions
-                # Simple concatenation without transitions
-                concat_file = os.path.join(temp_dir, "concat_list.txt")
-                with open(concat_file, "w") as f:
-                    for video_path in local_video_paths:
-                        f.write(f"file '{video_path}'\n")
-
-                subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-f",
-                        "concat",
-                        "-safe",
-                        "0",
-                        "-i",
-                        concat_file,
-                        "-c",
-                        "copy",
-                        output_path,
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-
-            # Read the output video
-            with open(output_path, "rb") as f:
-                video_bytes = f.read()
-
-            # Save as artifact
-            await tool_context.save_artifact(
-                output_filename,
-                types.Part.from_bytes(data=video_bytes, mime_type="video/mp4"),
-            )
-
-            return {
-                "status": "ok",
-                "video_filename": output_filename,
-                "num_videos_concatenated": len(video_filenames),
-            }
-
-    except subprocess.CalledProcessError as e:
-        return {
-            "status": "failed",
-            "error": f"FFmpeg error: {e.stderr if hasattr(e, 'stderr') else str(e)}",
-        }
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
-
-
 async def generate_virtual_try_on_images(
     person_uri: str,
     product_uri: str,
@@ -450,8 +359,8 @@ async def generate_virtual_try_on_images(
     """Generates a virtual try-on image from a person and product image.
 
     Args:
-        person_uri (str): The URI for the person's image.
-        product_uri (str): The URI for the product image.
+        person_uri (str): The URI for the person's image. This could be a gs:// location or a local artifact uri.
+        product_uri (str): The URI for the product image. This could be a gs:// location or a local artifact uri.
         number_of_images (int): The number of images to generate.
         tool_context (ToolContext): The tool context.
 
@@ -473,7 +382,7 @@ async def generate_virtual_try_on_images(
                 tool_context=tool_context,
                 state_var_name="person_gcs_uri",
             )
-            person_gcs_uri = person_upload_result["gsc_uri"]
+            person_gcs_uri = person_upload_result["gcs_uri"]
         logging.info(f"Loading product artifact: {product_uri}")
         if product_uri.startswith("gs://"):
             product_gcs_uri = product_uri
@@ -483,7 +392,7 @@ async def generate_virtual_try_on_images(
                 tool_context=tool_context,
                 state_var_name="product_gcs_uri",
             )
-            product_gcs_uri = product_upload_result["gsc_uri"]
+            product_gcs_uri = product_upload_result["gcs_uri"]
         logging.info("Calling the virtual try-on model 'virtual-try-on-preview-08-04'")
         image = client.models.recontext_image(
             model="virtual-try-on-preview-08-04",

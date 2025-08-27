@@ -6,7 +6,7 @@ from .prompts import (
     GLOBAL_INSTRUCTIONS,
 )
 from .tools import (
-    recontext_image_background,
+    edit_image,
     before_agent_get_user_file,
     generate_video,
     generate_virtual_try_on_images,
@@ -38,7 +38,7 @@ root_agent = Agent(
     global_instruction=GLOBAL_INSTRUCTIONS,
     instruction=ROOT_INSTRUCTION,
     tools=[
-        recontext_image_background,
+        edit_image,
         load_artifacts,
         generate_virtual_try_on_images,
         file_selector,
