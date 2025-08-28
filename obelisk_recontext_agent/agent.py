@@ -6,19 +6,16 @@ from .prompts import (
     GLOBAL_INSTRUCTIONS,
 )
 from .tools import (
-    recontext_image_background,
+    edit_image,
     before_agent_get_user_file,
     generate_video,
     generate_virtual_try_on_images,
     file_selector,
 )
-from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
 from google.adk.tools import load_artifacts
 from google.adk.planners import BuiltInPlanner
-from google.adk.agents.callback_context import CallbackContext
 from google.genai import types  # For types.Content
-from typing import Optional
 
 visual_generator = Agent(
     model="gemini-2.5-pro",
@@ -38,10 +35,10 @@ root_agent = Agent(
     global_instruction=GLOBAL_INSTRUCTIONS,
     instruction=ROOT_INSTRUCTION,
     tools=[
-        recontext_image_background,
+        edit_image,
         load_artifacts,
         generate_virtual_try_on_images,
-        file_selector,
+        # file_selector,
     ],
     sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
