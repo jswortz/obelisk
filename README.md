@@ -56,9 +56,14 @@ gsutil cp -r img/*.png $BUCKET/products/
   gcloud auth application-default login
   ```
 - **Environment Variables:** The following environment variables need to be set:
-    - `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID.
-    - `GOOGLE_CLOUD_LOCATION`: The Google Cloud region to use (e.g., `us-central1`).
-    - `BUCKET`: The GCS bucket to upload the generated images to.
+    - In the project root, create a `.env` file.
+    - Use this format:
+      ```bash
+      GOOGLE_GENAI_USE_VERTEXAI=1
+      GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
+      GOOGLE_CLOUD_LOCATION=REGION
+      BUCKET=YOUR_BUCKET
+      ```
 - **Python 3.9+** for backend
 - **Node.js 18+** for frontend
 
