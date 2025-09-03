@@ -51,6 +51,10 @@ gsutil cp -r img/*.png $BUCKET/products/
 
 - **Google Cloud Project:** You need a Google Cloud project with the AI Platform API enabled.
 - **Authentication:** You need to be authenticated with Google Cloud.
+  ```bash
+  gcloud auth login
+  gcloud auth application-default login
+  ```
 - **Environment Variables:** The following environment variables need to be set:
     - `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID.
     - `GOOGLE_CLOUD_LOCATION`: The Google Cloud region to use (e.g., `us-central1`).
