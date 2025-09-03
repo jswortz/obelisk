@@ -10,7 +10,6 @@ from .tools import (
     before_agent_get_user_file,
     generate_video,
     generate_virtual_try_on_images,
-    file_selector,
 )
 from google.genai import types
 from google.adk.tools import load_artifacts
@@ -38,7 +37,6 @@ root_agent = Agent(
         edit_image,
         load_artifacts,
         generate_virtual_try_on_images,
-        # file_selector,
     ],
     sub_agents=[visual_generator],
     generate_content_config=types.GenerateContentConfig(
@@ -46,3 +44,6 @@ root_agent = Agent(
     ),
     before_agent_callback=before_agent_get_user_file,
 )
+
+# Export the agent for ADK
+agent = root_agent

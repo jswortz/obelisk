@@ -4,12 +4,17 @@
 <img src="img/person-try-on.png" width=300px/>
 <img src="img/vto-output.png">
 
-This agent first generates a virtual try-on image of a person wearing a product, then recontextualizes the image by changing its background based on a user's prompt.
+Obelisk is an AI-powered virtual try-on and image recontextualization system that allows users to:
+1. Generate realistic images of people wearing clothing items
+2. Recontextualize images using nano-banana (Gemini 2.5 image) to iteratively edit images from text
+3. Create animated videos from the final results
+
+The system consists of a backend agent powered by Google's Vertex AI models and a React-based frontend for easy interaction.
 
 ## Features
 
 - **Virtual Try-On:** The agent's primary function is to generate a realistic image of a person wearing a clothing item.
-- **Background Recontextualization:** After the virtual try-on, the agent can replace the background of the generated image with a new scene described by a prompt, using Imagen 3's image editing capabilities.
+- **Iterative Image Editing:** After the virtual try-on, the agent uses nano-banana (Gemini 2.5 image) to iteratively edit the generated image based on text prompts, allowing for sophisticated background changes and other transformations.
 - **GCS and Local Image Support:** The agent can accept person and product images from either a GCS URI or a local file upload (artifact).
 - **Multiple Image Generation:** The agent can generate multiple images in a single request.
 
@@ -18,16 +23,29 @@ This agent first generates a virtual try-on image of a person wearing a product,
 The agent follows a multi-step process:
 
 1.  **Virtual Try-On:** It uses the `virtual-try-on-preview-08-04` model to generate an image of a person wearing a product. This is handled by the `generate_virtual_try_on_images` tool.
-2.  **Background Swap:** It then uses the `imagen-3.0-capability-001` model to edit the background of the virtual try-on image. This is done with the `recontext_image_background` tool, which leverages the background swap mode.
+2.  **Iterative Image Editing:** It uses nano-banana (Gemini 2.5 image) to iteratively edit images based on text prompts. This powerful model allows for sophisticated image transformations and background changes through natural language instructions.
 3.  **Animation with VEO3:** It then uses the `veo-3.0-generate-preview` model to animate the final image. This is handled by the `generate_video` tool.
 
 All generated images are saved as artifacts and uploaded to a GCS bucket.
 
-Setup:
+## Initial Setup
 
-```
+```bash
+# Clone the repository
+git clone https://github.com/jswortz/obelisk.git
+cd obelisk
+
+# Copy sample images to GCS bucket
 gsutil cp -r img/*.png $BUCKET/products/
 ```
+
+## Project Structure
+
+- `/obelisk_recontext_agent/` - Backend agent implementation
+- `/frontend/` - React-based web interface
+- `/img/` - Sample images and outputs
+- `/deployment/` - Deployment configurations
+- `/tests/` - Test suites
 
 ## Prerequisites
 
@@ -37,17 +55,43 @@ gsutil cp -r img/*.png $BUCKET/products/
     - `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID.
     - `GOOGLE_CLOUD_LOCATION`: The Google Cloud region to use (e.g., `us-central1`).
     - `BUCKET`: The GCS bucket to upload the generated images to.
+- **Python 3.9+** for backend
+- **Node.js 18+** for frontend
 
-## Example Prompts
+## Quick Start
+
+### Backend Setup
+```bash
+# Install dependencies
+make install
+
+# Run the backend API
+make run
+```
+
+### Frontend Setup
+```bash
+# Install frontend dependencies
+make frontend-install
+
+# Run the frontend development server
+make frontend-dev
+```
+
+The application will be available at `http://localhost:5173`
+
+## Example Usage
 
 #### Important
-Make sure images are less than 30 mb
+Make sure images are less than 30 MB
 
-1.  **First, upload a person image and a product image.**
-2.  **Then, generate the virtual try-on image:**
-    `"Use the uploaded person and sweater images to generate a virtual try-on image."`
-3.  **Finally, recontextualize the background:**
-    `"Take the generated image and place the person on top of Mt. Everest."`
+1.  **Upload Images:** Use the web interface to upload a person image and a product image
+2.  **Generate Virtual Try-On:** Click "Generate Try-On" to create the initial image
+3.  **Edit with Text:** Use natural language prompts to iteratively edit the image:
+    - "Place the person on top of Mt. Everest"
+    - "Change the background to a sunny beach"
+    - "Add a sunset in the background"
+    - "Make it look like they're in a fashion show"
 
 
 # Deployment to Agentspace

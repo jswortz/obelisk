@@ -15,6 +15,9 @@ dependencies = [
     "google-genai (>=1.31.0,<2.0.0)",
     "cloudpickle (>=3.1.1,<4.0.0)",
     "google-adk (==1.10.0)",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
 ]
 
 [tool.poetry]

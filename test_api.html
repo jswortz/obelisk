@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Virtual Try-On API</title>
+</head>
+<body>
+    <h1>Test Virtual Try-On API</h1>
+    <form id="uploadForm">
+        <label>Person Image: <input type="file" id="personImage" required></label><br>
+        <label>Product Image: <input type="file" id="productImage" required></label><br>
+        <button type="submit">Submit</button>
+    </form>
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            formData.append('person_image', document.getElementById('personImage').files[0]);
+            formData.append('product_image', document.getElementById('productImage').files[0]);
+            
+            try {
+                const response = await fetch('http://localhost:8000/virtual-try-on', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                document.getElementById('result').innerHTML = `<pre>${JSON.stringify(result, null, 2)}</pre>`;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<pre>Error: ${error.message}</pre>`;
+            }
+        });
+    </script>
+</body>
+</html>

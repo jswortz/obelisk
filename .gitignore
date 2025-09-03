@@ -2,3 +2,5 @@
 *.pyc
 .venv/
 *.whl
+
+*/node_modules/*

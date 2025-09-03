@@ -19,11 +19,11 @@ LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 
 async def edit_image(prompt: str, tool_context: ToolContext):
-    """Recontextualizes an image by changing its background.
+    """Edit an image based on a prompt.
+    The image is already selected as the last generated image in the sequence of events.
 
     Args:
-        image_selection (int): The index (zero-based)of the image to edit
-        prompt (str): The prompt describing the new background.
+        prompt (str): The prompt describing the new edit to make to the image.
         tool_context (ToolContext): The tool context.
     """
     client = genai.Client(
@@ -245,26 +245,26 @@ def download_blob(bucket_name, source_blob_name):
     return blob.download_as_bytes()
 
 
-def file_selector(state_variable: str, index: int, tool_context: ToolContext):
-    """
-    Selects a file from a state variable by index.
+# def file_selector(state_variable: str, index: int, tool_context: ToolContext):
+#     """
+#     Selects a file from a state variable by index.
 
-    Args:
-        state_variable (str): The name of the state variable containing the list of files.
-        index (int): The zero-based index of the file to select.
-        tool_context (ToolContext): The tool context.
+#     Args:
+#         state_variable (str): The name of the state variable containing the list of files.
+#         index (int): The zero-based index of the file to select.
+#         tool_context (ToolContext): The tool context.
 
-    Returns:
-        dict: A dictionary containing the status and the selected file, or an error message.
-    """
-    try:
-        selected_file = tool_context.state[state_variable][index]
-        tool_context.state["selected_file"] = selected_file
-        return {"status": "ok", "selected_file": selected_file}
-    except KeyError:
-        return {"status": "error", "error": "State variable not found"}
-    except IndexError:
-        return {"status": "error", "error": "Index out of range"}
+#     Returns:
+#         dict: A dictionary containing the status and the selected file, or an error message.
+#     """
+#     try:
+#         selected_file = tool_context.state[state_variable][index]
+#         tool_context.state["selected_file"] = selected_file
+#         return {"status": "ok", "selected_file": selected_file}
+#     except KeyError:
+#         return {"status": "error", "error": "State variable not found"}
+#     except IndexError:
+#         return {"status": "error", "error": "Index out of range"}
 
 
 async def generate_video(
@@ -371,6 +371,7 @@ async def generate_virtual_try_on_images(
                 tool_context=tool_context,
                 state_var_name="person_gcs_uri",
             )
+            time.sleep(1)
             person_gcs_uri = person_upload_result["gcs_uri"]
         logging.info(f"Loading product artifact: {product_uri}")
         if product_uri.startswith("gs://"):
@@ -381,6 +382,7 @@ async def generate_virtual_try_on_images(
                 tool_context=tool_context,
                 state_var_name="product_gcs_uri",
             )
+            time.sleep(1)
             product_gcs_uri = product_upload_result["gcs_uri"]
         logging.info("Calling the virtual try-on model 'virtual-try-on-preview-08-04'")
         image = client.models.recontext_image(
