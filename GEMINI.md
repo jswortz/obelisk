@@ -25,7 +25,7 @@ The system consists of a backend agent powered by Google's Vertex AI models and 
 make install
 
 # Activate virtual environment
-poetry shell
+uv shell
 
 # Set required environment variables
 export GOOGLE_CLOUD_PROJECT="your-project-id"
@@ -88,7 +88,7 @@ The application will be available at `http://localhost:5173`.
 ## Development Guidelines
 
 ### Code Style
-- This is a Poetry-managed Python 3.12+ project
+- This is a uv-managed Python 3.12+ project
 - Follow existing async patterns when adding new callbacks
 - Use type hints for function parameters and returns
 - Handle Google Cloud authentication errors gracefully

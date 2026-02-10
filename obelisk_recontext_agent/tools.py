@@ -9,14 +9,19 @@ from google import genai
 import os
 import uuid
 import time
+import asyncio
 from google.genai.types import GenerateVideosConfig, RecontextImageConfig, Image
 
 
-client = genai.Client()
 
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-obelisk-dev")
-LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+# client = genai.Client(...) # Removed global init
 
+def get_genai_client():
+    return genai.Client(
+        vertexai=True,
+        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "wortz-project-352116"), # Fallback to known project if env missing
+        location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+    )
 
 async def edit_image(prompt: str, tool_context: ToolContext):
     """Edit an image based on a prompt.
@@ -26,13 +31,42 @@ async def edit_image(prompt: str, tool_context: ToolContext):
         prompt (str): The prompt describing the new edit to make to the image.
         tool_context (ToolContext): The tool context.
     """
+    client = get_genai_client()
+    try:
+        image_location = tool_context.state["selected_file"]
+    except:
+        return {
+            "status": "error",
+            "message": "select the file for editing first using the file selection tool",
+        }
+    # ... rest of function ...
+
+
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-obelisk-dev")
+LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+
+async def edit_image(prompt: str, tool_context: ToolContext, image_uri: Optional[str] = None):
+    """Edit an image based on a prompt.
+    The image is already selected as the last generated image in the sequence of events.
+
+    Args:
+        prompt (str): The prompt describing the new edit to make to the image.
+        tool_context (ToolContext): The tool context.
+        image_uri (str, optional): The URI of the image to edit. If not provided, the last generated image will be used.
+    """
     client = genai.Client(
         vertexai=True,
         project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
         location="global",
     )
     try:
-        image_location = tool_context.state["selected_file"]
+        if image_uri:
+            image_location = image_uri
+            print(f"DEBUG: Using provided image_uri: {image_location}")
+        else:
+            image_location = tool_context.state["selected_file"]
+            print(f"DEBUG: Using state selected_file: {image_location}")
     except:
         return {
             "status": "error",
@@ -101,6 +135,8 @@ async def edit_image(prompt: str, tool_context: ToolContext):
         }
 
 
+import mimetypes
+
 async def upload_file_to_gcs(
     file_path: str,
     tool_context: ToolContext,
@@ -116,13 +152,24 @@ async def upload_file_to_gcs(
     Returns:
         dict: A dictionary containing the status of the upload and the GCS URI if successful.
     """
-    gcs_bucket = os.environ.get("BUCKET", "default")
-    bucket_name = gcs_bucket.split("gs://")[1]
+    gcs_bucket = os.environ.get("BUCKET")
+    if not gcs_bucket:
+        logging.error("BUCKET environment variable is not set.")
+        return {"status": "error", "error": "Configuration error: BUCKET environment variable is not set"}
+    
+    if "gs://" in gcs_bucket:
+        bucket_name = gcs_bucket.split("gs://")[1].strip("/")
+    else:
+        bucket_name = gcs_bucket.strip("/")
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(os.path.basename(file_path))
+    blob = bucket.blob(file_path)
     # get the file bytes:
     file_artifact = await tool_context.load_artifact(filename=file_path)
+    
+    file_data = None
+    content_type = None
+
     if (
         file_artifact
         and file_artifact.inline_data
@@ -130,6 +177,14 @@ async def upload_file_to_gcs(
     ):
         file_data = file_artifact.inline_data.data
         content_type = file_artifact.inline_data.mime_type
+    elif os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        content_type, _ = mimetypes.guess_type(file_path)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+    if file_data and content_type:
         blob.upload_from_string(file_data, content_type=content_type)
         # setup the gcs uri state variable if empty:
         if not tool_context.state.get(state_var_name, False):
@@ -141,7 +196,7 @@ async def upload_file_to_gcs(
             "gcs_uri": f"gs://{bucket_name}/{file_path}",
         }
     else:
-        return {"status": "error", "error": "File not found"}
+        return {"status": "error", "error": f"File not found: {file_path}"}
 
 
 # Example usage with multiple product images
@@ -273,6 +328,7 @@ async def generate_video(
     number_of_videos: int,
     # aspect_ratio: str = "16:9",
     negative_prompt: str,
+    image_uri: Optional[str] = None,
 ):
     f"""Generates a video based on the prompt for VEO3.
 
@@ -281,6 +337,7 @@ async def generate_video(
         tool_context (ToolContext): The tool context.
         number_of_videos (int, optional): The number of videos to generate.
         negative_prompt (str, optional): The negative prompt to use. 
+        image_uri (str, optional): The URI of the image to animate. If not provided, the last generated image will be used.
         existing_image_gcs_uri (str, optional): The existing image filename, use the saved gcs locations from the `recontextualized_image_gcs_uri` state variable
 
     Returns:
@@ -294,7 +351,12 @@ async def generate_video(
         negative_prompt=negative_prompt,
     )
     try:
-        existing_image_gcs_uri = tool_context.state["selected_file"]
+        if image_uri:
+             existing_image_gcs_uri = image_uri
+             print(f"DEBUG: Using provided image_uri for video: {existing_image_gcs_uri}")
+        else:
+            existing_image_gcs_uri = tool_context.state["selected_file"]
+            print(f"DEBUG: Using state selected_file for video: {existing_image_gcs_uri}")
     except KeyError:
         return {
             "status": "error",
@@ -302,6 +364,7 @@ async def generate_video(
         }
 
     existing_image = types.Image(gcs_uri=existing_image_gcs_uri, mime_type="image/png")
+    client = get_genai_client()
     operation = client.models.generate_videos(
         model="veo-3.0-generate-preview",
         prompt=prompt,
@@ -310,7 +373,7 @@ async def generate_video(
     )
 
     while not operation.done:
-        time.sleep(15)
+        await asyncio.sleep(15)
         operation = client.operations.get(operation)
         print(operation)
 
@@ -337,7 +400,22 @@ async def generate_video(
                 else:
                     return {"status": "error", "error": "BUCKET not set"}
         return {"status": "ok", "video_filename": f"{filename}.mp4"}
+    
+    if operation.result and operation.result.rai_media_filtered_count > 0:
+        return {
+            "status": "error", 
+            "error": f"Video generation filtered. Reasons: {operation.result.rai_media_filtered_reasons}"
+        }
+        
+    return {"status": "error", "error": "No video generated for unknown reason"}
 
+
+
+def normalize_uri(uri: str) -> str:
+    """Converts HTTP GCS URLs to gs:// format if applicable."""
+    if uri.startswith("https://storage.googleapis.com/"):
+        return uri.replace("https://storage.googleapis.com/", "gs://")
+    return uri
 
 async def generate_virtual_try_on_images(
     person_uri: str,
@@ -348,43 +426,61 @@ async def generate_virtual_try_on_images(
     """Generates a virtual try-on image from a person and product image.
 
     Args:
-        person_uri (str): The URI for the person's image. This could be a gs:// location or a local artifact uri.
-        product_uri (str): The URI for the product image. This could be a gs:// location or a local artifact uri.
+        person_uri (str): The URI for the person's image. This could be a gs:// location, http url, or a local artifact uri.
+        product_uri (str): The URI for the product image. This could be a gs:// location, http url, or a local artifact uri.
         number_of_images (int): The number of images to generate.
         tool_context (ToolContext): The tool context.
 
     Returns:
         dict: The JSON response with status and generated image filename.
     """
+    # Normalize inputs
+    person_uri = normalize_uri(person_uri)
+    product_uri = normalize_uri(product_uri)
+
+    print(f"DEBUG: Starting virtual try-on generation with person_uri: {person_uri} and product_uri: {product_uri}")
     logging.info(
         f"Starting virtual try-on generation with person_uri: {person_uri} and product_uri: {product_uri}"
     )
+    print(f"DEBUG: Starting virtual try-on generation with person_uri: {person_uri} and product_uri: {product_uri}")
     try:
         # Load person artifact
         logging.info(f"Loading person artifact: {person_uri}")
         # check if the person uri is a gcs one
         if person_uri.startswith("gs://"):
             person_gcs_uri = person_uri
+            print(f"DEBUG: Using existing person GCS URI: {person_gcs_uri}")
         else:
             person_upload_result = await upload_file_to_gcs(
                 file_path=person_uri,
                 tool_context=tool_context,
                 state_var_name="person_gcs_uri",
             )
-            time.sleep(1)
+            if person_upload_result.get("status") == "error":
+                 print(f"DEBUG: Person upload failed: {person_upload_result.get('error')}")
+                 return {"Status": "generation_error", "Error": f"Failed to upload person image: {person_upload_result.get('error')}"}
+            print("DEBUG: Person upload successful, sleeping 1s")
+            await asyncio.sleep(1)
             person_gcs_uri = person_upload_result["gcs_uri"]
         logging.info(f"Loading product artifact: {product_uri}")
         if product_uri.startswith("gs://"):
             product_gcs_uri = product_uri
+            print(f"DEBUG: Using existing product GCS URI: {product_gcs_uri}")
         else:
             product_upload_result = await upload_file_to_gcs(
                 file_path=product_uri,
                 tool_context=tool_context,
                 state_var_name="product_gcs_uri",
             )
-            time.sleep(1)
+            if product_upload_result.get("status") == "error":
+                 print(f"DEBUG: Product upload failed: {product_upload_result.get('error')}")
+                 return {"Status": "generation_error", "Error": f"Failed to upload product image: {product_upload_result.get('error')}"}
+            print("DEBUG: Product upload successful, sleeping 1s")
+            await asyncio.sleep(1)
             product_gcs_uri = product_upload_result["gcs_uri"]
         logging.info("Calling the virtual try-on model 'virtual-try-on-preview-08-04'")
+        print("DEBUG: Calling virtual-try-on-preview-08-04")
+        client = get_genai_client()
         image = client.models.recontext_image(
             model="virtual-try-on-preview-08-04",
             source=types.RecontextImageSource(
@@ -424,7 +520,10 @@ async def generate_virtual_try_on_images(
                         state_var_name="virtual_product_try_on_gcs_uri",
                     )
                     tool_context.state["selected_file"] = gcs_upload_op["gcs_uri"]
+                    print(f"DEBUG: Saved selected_file state: {tool_context.state['selected_file']}")
                     logging.info(f"Successfully saved artifact '{filename}'.")
+                    # Also append full GCS URI to filenames for return value so agent can use it
+                    filenames.append(gcs_upload_op["gcs_uri"])
                 else:
                     logging.warning(
                         f"Skipping an empty generated image in the response."
@@ -432,10 +531,12 @@ async def generate_virtual_try_on_images(
             return {
                 "status": "complete",
                 "image_filenames": filenames,
+                "image_uris": [f for f in filenames if f.startswith("gs://")],
             }
     except Exception as e:
         logging.error(
             f"An unexpected error occurred in generate_virtual_try_on_image: {e}, double check the product and person images are not swapped",
             exc_info=True,
         )
+        print(f"DEBUG: Exception in generate_virtual_try_on_images: {e}")
         return {"Status": "generation_error", "Error": str(e)}

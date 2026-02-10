@@ -31,6 +31,7 @@ root_agent = Agent(
     model="gemini-2.5-flash",
     name="product_recontextualiztion_agent",
     description="An agent that recontextualizes product images into new scenes based on a prompt.",
+    planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(include_thoughts=True)),
     global_instruction=GLOBAL_INSTRUCTIONS,
     instruction=ROOT_INSTRUCTION,
     tools=[

@@ -16,8 +16,7 @@ help:
 
 install: frontend-install
 	@echo "Installing backend dependencies..."
-	@pip install poetry
-	@poetry install
+	@uv sync
 
 frontend-install:
 	@echo "Installing frontend dependencies..."
@@ -33,11 +32,11 @@ frontend-dev:
 
 api-dev:
 	@echo "Starting API server..."
-	@poetry run python mock_api.py 
+	@uv run python mock_api.py 
 
 adk-dev:
 	@echo "Starting ADK API server..."
-	@poetry run adk api_server .
+	@uv run adk api_server .
 
 build: frontend-build
 	@echo "Build complete!"
@@ -57,5 +56,5 @@ clean:
 
 test:
 	@echo "Running tests..."
-	@poetry run pytest tests/
+	@uv run pytest tests/
 	@cd frontend && npm run lint

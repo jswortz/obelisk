@@ -1,28 +1,33 @@
 [project]
 name = "obelisk_recontext_agent"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "Jeremy Wortz",email = "jwortz@google.com"}
-]
+description = "Obelisk Agent for visual recontextualization"
 readme = "README.md"
 requires-python = ">=3.12"
+authors = [
+    {name = "Jeremy Wortz", email = "jwortz@google.com"}
+]
 dependencies = [
-    "requests",
-    "python-dotenv",
-    "flask",
-    "google-auth",
-    "google-genai (>=1.31.0,<2.0.0)",
-    "cloudpickle (>=3.1.1,<4.0.0)",
-    "google-adk (==1.10.0)",
-    "fastapi",
-    "uvicorn[standard]",
-    "python-multipart",
+    "cloudpickle>=3.1.2",
+    "fastapi>=0.128.6",
+    "google-adk>=1.24.1",
+    "google-api-python-client>=2.189.0",
+    "google-cloud-aiplatform[adk,agent-engines]>=1.133.0",
+    "google-cloud-bigquery>=3.40.0",
+    "google-cloud-storage>=3.9.0",
+    "google-genai>=1.62.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "python-multipart>=0.0.22",
+    "requests>=2.32.5",
+    "uvicorn[standard]>=0.40.0",
+    "vertexai>=1.43.0",
 ]
 
-[tool.poetry]
-packages = [{include = "obelisk_recontext_agent"}]
-
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["obelisk_recontext_agent"]
